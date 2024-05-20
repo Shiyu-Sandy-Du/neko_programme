@@ -1,0 +1,21 @@
+#!/bin/sh -e
+
+prefix=/scratch/shiyud/neko
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir_pkg=${prefix}/include/neko
+FC=mpif90
+FCFLAGS='-I/scratch/shiyud/json-fortran/include  -g -O2'
+
+printf "\n%s\n" 'N E K O build tool, Version 0.8.99'
+printf "%s\n" '(build: 2024-05-06 on x86_64-pc-linux-gnu using gnu)'
+
+
+printf '\n%s' "Building user NEKO ..."
+
+
+$FC $FCFLAGS -I$includedir_pkg -L$libdir $@ boyd_filter.f90\
+    -lneko  -L/scratch/shiyud/json-fortran/lib -ljsonfortran   -llapack -lblas    -o boyd_filter
+
+
+printf "%s\n" ' done!'
