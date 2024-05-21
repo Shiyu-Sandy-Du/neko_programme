@@ -46,6 +46,7 @@ examples/*/*.nek5000
 examples/*/*0.f0*
 *.chkp
 *.lst
+*.csv
 
 # Ignore temporary files
 *~
@@ -53,3 +54,4 @@ examples/*/*0.f0*
 
 # Explicitly ignore binaries to avoid confusion
 boyd_filter
+filter_1d
