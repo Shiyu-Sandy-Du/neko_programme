@@ -13,6 +13,8 @@ program filter_1d
   type(elementwise_filter_t) :: test_filter_b, test_filter_nb
 
   call neko_init  
+  
+  ! output_file = file_init("output.csv")
 
   lx = 8
   nelem = 1
@@ -58,23 +60,30 @@ program filter_1d
   allocate(f_filtered_nb(lx*nelem))
   
   do i = 1, nelem
-     call mxm(test_filter_b%fh, lx, f((i-1)*lx+1:i*lx), lx, f_filtered_b((i-1)*lx+1:i*lx), lx)
-     call mxm(test_filter_b%fh, lx, f((i-1)*lx+1:i*lx), lx, f_filtered_nb((i-1)*lx+1:i*lx), lx)
+     call mxm(test_filter_b%fh, lx, f((i-1)*lx+1:i*lx), lx, f_filtered_b((i-1)*lx+1:i*lx), 1)
+     call mxm(test_filter_b%fh, lx, f((i-1)*lx+1:i*lx), lx, f_filtered_nb((i-1)*lx+1:i*lx), 1)
   end do
+  
+  ! output
+  call vec_out%init(lx*nelem)
 
-  open(unit = 10, file = "data.csv") 
-  do i = 1, lx*nelem
-        do j = 1, 4
-            if (j == 4) then
-                write(unit, '(I0)', advance='no') (/x(i), f(i), f_filtered_b(i), f_filtered_nb(i)/)
-            else
-                write(unit, '(I0, ",")', advance='no') (/x(i), f(i), f_filtered_b(i), f_filtered_nb(i)/)
-            end if
-        end do
-        write(unit, *) ! New line after each row
-  end do
-  close(unit)
-
+  output_file = file_init(trim(path)//trim("x.csv"))
+  vec_out%x = x
+  call output_file%write(vec_out)
+  
+  output_file = file_init(trim(path)//trim("f.csv"))
+  vec_out%x = f
+  call output_file%write(vec_out)
+  
+  output_file = file_init(trim(path)//trim("f_filtered_b.csv"))
+  vec_out%x = f_filtered_b
+  call output_file%write(vec_out)
+  
+  output_file = file_init(trim(path)//trim("f_filtered_nb.csv"))
+  vec_out%x = f_filtered_nb
+  call output_file%write(vec_out)
+  
+  call file_free(output_file)
 
   if (pe_rank .eq. 0) write(*,*) 'Done'
   
