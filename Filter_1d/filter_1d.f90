@@ -61,7 +61,7 @@ program filter_1d
   
   do i = 1, nelem
      call mxm(test_filter_b%fh, lx, f((i-1)*lx+1:i*lx), lx, f_filtered_b((i-1)*lx+1:i*lx), 1)
-     call mxm(test_filter_b%fh, lx, f((i-1)*lx+1:i*lx), lx, f_filtered_nb((i-1)*lx+1:i*lx), 1)
+     call mxm(test_filter_nb%fh, lx, f((i-1)*lx+1:i*lx), lx, f_filtered_nb((i-1)*lx+1:i*lx), 1)
   end do
   
   ! output
