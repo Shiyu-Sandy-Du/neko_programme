@@ -27,16 +27,16 @@ program filter_1d
   ! Initialize the filter
   call test_filter_b%init(lx, "Boyd")
   test_filter_b%trnsfr(test_filter_b%nx-0) = 0.0   
-  test_filter_b%trnsfr(test_filter_b%nx-1) = 0.05
-  test_filter_b%trnsfr(test_filter_b%nx-2) = 0.50
-  test_filter_b%trnsfr(test_filter_b%nx-3) = 0.95  
+  test_filter_b%trnsfr(test_filter_b%nx-1) = 0.0
+  test_filter_b%trnsfr(test_filter_b%nx-2) = 0.5
+  test_filter_b%trnsfr(test_filter_b%nx-3) = 1.0 
   call test_filter_b%build_1d()
 
   call test_filter_nb%init(lx, "nonBoyd")
   test_filter_nb%trnsfr(test_filter_nb%nx-0) = 0.0   
-  test_filter_nb%trnsfr(test_filter_nb%nx-1) = 0.05
-  test_filter_nb%trnsfr(test_filter_nb%nx-2) = 0.50
-  test_filter_nb%trnsfr(test_filter_nb%nx-3) = 0.95  
+  test_filter_nb%trnsfr(test_filter_nb%nx-1) = 0.0
+  test_filter_nb%trnsfr(test_filter_nb%nx-2) = 0.5
+  test_filter_nb%trnsfr(test_filter_nb%nx-3) = 1.0  
   call test_filter_nb%build_1d()
 
   ! function setup, elements are assumed to be of equal size
