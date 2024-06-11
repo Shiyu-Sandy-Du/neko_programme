@@ -5,21 +5,25 @@ module user
   implicit none
 
   ! Global user variables
+  real(kind=rp), allocatable :: u_eq(:,:,:,:), v_eq(:,:,:,:), w_eq(:,:,:,:)
   real(kind=rp), allocatable :: f(:,:,:), f_2d_x(:,:), f_2d_z(:,:) ! work array to store field in a block
   real(kind=rp), allocatable :: fb(:,:,:) ! work array to including the ending boundary value
-  real(kind=rp), allocatable :: ident(:,:) ! work array for the identity matrix
+  integer :: sampling_ratio = 3 ! multiplication of interpolation points onto equidistant mesh
   integer :: kx_cutoff = 2
   integer :: kz_cutoff = 2
   integer :: nelvx = 8
   integer :: nelvy = 8
   integer :: nelvz = 8
   integer :: lx, ly, lz ! GLL points in an element
+  integer :: lx_filter ! assuming lx == ly == lz
   integer :: nx, ny, nz ! no-overlapping points in the domain
-  type(matrix_t) :: wt, wtt, wt_inv, wt_invt ! weighting matrix for mapping between different collocation poits
+  ! assuming lx == ly == lz
+  type(matrix_t) :: wt, wtt, wttwt_inv, wt_inv, wt_invt ! weighting matrix for mapping between different collocation poits
   ! operator to link field on Fourier collocation space and state space.
   complex, allocatable :: phi_x(:,:), phi_x_inv(:,:), phi_z(:,:), phi_z_inv(:,:)
-  real(kind=rp), allocatable :: filter_amp_x(:,:), filter_amp_z(:,:), filter_x(:,:), filter_z(:,:)
-
+  real(kind=rp), allocatable :: filter_amp_x(:,:), filter_amp_z(:,:)
+  real(kind=rp), allocatable :: filter_x(:,:), filter_z(:,:), filter_zt(:,:)
+  
 contains
 
   ! Register user defined functions (see user_intf.f90)
@@ -94,7 +98,7 @@ contains
       ux  = ux * Re_tau/Re_b
 
       eps1 = 3e-2
-      kx1  = 5
+      kx1  = 2
       kz1  = 2
 
       alpha1 = kx1 * 2*PI/(pi*2)
@@ -111,8 +115,6 @@ contains
       uvw(1)  = ux  + eps1*beta1  * sin(alpha1*x)*cos(beta1*z) + eps2*beta2  * sin(alpha2*x)*cos(beta2*z)
       uvw(2)  =       eps1        * sin(alpha1*x)*sin(beta1*z) + eps2        * sin(alpha2*x)*sin(beta2*z)
       uvw(3)  =     - eps1*alpha1 * cos(alpha1*x)*sin(beta1*z) - eps2*alpha2 * cos(alpha2*x)*sin(beta2*z)
-
-      ! uvw(1) = (z-pi/2)**2    ! allocate(f_local(nelvz_local*(u%xh%lz-1),nelvy*(u%xh%ly-1),nelvx*(u%xh%lx-1)))
       
   end function channel_ic
 
@@ -129,13 +131,18 @@ contains
     lx = u%xh%lx
     ly = u%xh%ly
     lz = u%xh%lz
-    nx = nelvx * (lx - 1)
-    ny = nelvy * ly
-    nz = nelvz * (lz - 1)
+    nx = nelvx * (lx*sampling_ratio - 1)
+    ny = nelvy * ly*sampling_ratio
+    nz = nelvz * (lz*sampling_ratio - 1)
+    lx_filter = lx*sampling_ratio
+
+    allocate(u_eq(lx_filter, lx_filter, lx_filter, u%msh%nelv))
+    allocate(v_eq(lx_filter, lx_filter, lx_filter, u%msh%nelv))
+    allocate(w_eq(lx_filter, lx_filter, lx_filter, u%msh%nelv))
 
     allocate(f(nx,ny,nz))
     allocate(fb(nx+1,ny,nz+1))
-    allocate(f_2d_z(nx*ny,nz))
+    allocate(f_2d_z(nz,nx*ny))
     allocate(f_2d_x(nx,ny*nz))
 
     call map_wt_init(u)
@@ -152,9 +159,8 @@ contains
 
     call Fourier_init(phi_x, phi_x_inv, filter_amp_x, filter_x, kx_cutoff, nx)
     call Fourier_init(phi_z, phi_z_inv, filter_amp_z, filter_z, kz_cutoff, nz)
-    
+    filter_zt = transpose(filter_z)
     call user_field_filtering(t, 0, u, v, w, p, coef, params)
-
   end subroutine user_initialize
 
   ! User-defined routine called at the end of every time step
@@ -166,21 +172,24 @@ contains
     type(field_t), intent(inout) :: u
     type(field_t), intent(inout) :: v
     type(field_t), intent(inout) :: w
-    type(field_t), intent(inout) :: p
-    
+    type(field_t), intent(inout) :: p  
     integer :: i
 
     ! Interpolate to equidistant points on homogeneous directions
-    call map_collocation_pts(u, "z", wt%x, wtt%x, ident, lx)
-    ! Filtering over homogeneous directions
-    call field_global_filtering_z(u, coef)
-   !  call field_global_filtering_z(v, coef)
-   !  call field_global_filtering_z(w, coef)
-   !  call field_global_filtering_z(p, coef)
+    call map_collocation_pts(u_eq, lx_filter, u%x, lx, wt%x, wtt%x, u%msh%nelv)
+    call map_collocation_pts(v_eq, lx_filter, v%x, lx, wt%x, wtt%x, u%msh%nelv)
+    call map_collocation_pts(w_eq, lx_filter, w%x, lx, wt%x, wtt%x, u%msh%nelv)
+
+    ! Filtering over x and z direction
+    call field_global_filtering_xz(u_eq, lx_filter, u%msh%nelv, u%msh%offset_el)
+    call field_global_filtering_xz(v_eq, lx_filter, u%msh%nelv, u%msh%offset_el)
+    call field_global_filtering_xz(w_eq, lx_filter, u%msh%nelv, u%msh%offset_el)
 
     ! Interpolate back to GLL points on homogeneous directions
-    call map_collocation_pts(u, "z", wt_inv%x, wt_invt%x, ident, lx)
-  
+    call map_collocation_pts(u%x, lx, u_eq, lx_filter, wt_inv%x, wt_invt%x, u%msh%nelv)
+    call map_collocation_pts(v%x, lx, v_eq, lx_filter, wt_inv%x, wt_invt%x, u%msh%nelv)
+    call map_collocation_pts(w%x, lx, w_eq, lx_filter, wt_inv%x, wt_invt%x, u%msh%nelv)
+
   end subroutine user_field_filtering
 
   subroutine map_wt_init(u)
@@ -188,24 +197,23 @@ contains
     real(kind=rp) :: x_equid
     integer :: i
 
-    call wt%init(lx, lx)
-    call wtt%init(lx, lx)
-    call wt_inv%init(lx, lx)
-    call wt_invt%init(lx, lx)
-    allocate(ident(lx,lx))
+    call wt%init(lx_filter, lx)
+    call wtt%init(lx, lx_filter)
+    call wttwt_inv%init(lx, lx)
+    call wt_inv%init(lx, lx_filter)
+    call wt_invt%init(lx_filter, lx)
 
-    ident = 0.0_rp
-    do i = 1, lx
-      x_equid = -1.0_rp + (i-1) * 2.0_rp/(lx-1)
+    do i = 1, lx_filter
+      x_equid = -1.0_rp + (i-1) * 2.0_rp/(lx_filter - 1)
       call fd_weights_full(x_equid, u%xh%zg(:,1), lx-1, 0, wtt%x(:,i))
       wt%x(i,:) = wtt%x(:,i)
-      ident(i,i) = 1.0_rp
     end do
 
-    wt_inv%x = wt%x
-    wt_invt%x = wtt%x
-    call wt_inv%inverse()
-    call wt_invt%inverse()
+    wttwt_inv%x = matmul(wtt%x, wt%x)
+    call wttwt_inv%inverse()
+
+    wt_inv%x = matmul(wttwt_inv%x, wtt%x)
+    wt_invt%x = transpose(wt_inv%x)
 
   end subroutine map_wt_init
 
@@ -249,7 +257,7 @@ contains
        filter_amp(nx-i+1,nx-i+1) = 1.0_rp
     end do
     
-    !!! Step3: Formulate the filtering operator
+    !!! Step3: Formulate the filteritng operator
     w1 = cmplx(filter_amp, 0.0_rp)
     w1 = matmul(w1,phi_inv)
     w1 = matmul(phi,w1)
@@ -258,85 +266,125 @@ contains
   end subroutine Fourier_init
 
   ! 1d mapping between GLL collocation points and Fourier collocation points
-  subroutine map_collocation_pts(u, hom_dir, wt, wtt, ident, lx)
-    type(field_t), intent(inout) :: u
-    character(len=1), intent(in) :: hom_dir
-    integer :: lx
-    real(kind=rp) :: wt(lx,lx), wtt(lx,lx), ident(lx,lx)
+  subroutine map_collocation_pts(v, nv, u, nu, wt, wtt, nelv)
+    integer, intent(inout) :: nv, nu, nelv
+    real(kind=rp), intent(inout) :: v(nv, nv, nv, nelv), u(nv, nv, nv, nelv)
+    real(kind=rp), intent(inout) :: wt(nv, nu), wtt(nu, nv)
 
     ! interpolate the field
-    if (trim(hom_dir) .eq. 'x') then
-       call tnsr1_3d(u%x, lx, lx, wt, ident, ident, u%msh%nelv)
-    else if (trim(hom_dir) .eq. 'z') then
-       call tnsr1_3d(u%x, lx, lx, ident, ident, wtt, u%msh%nelv)
-    else
-       call neko_error("homogeneous direction is wrongly set")
-    end if
+    call tnsr3d(v, nv, u, nu, wt, wtt, wtt, nelv)
 
   end subroutine map_collocation_pts
   
   ! cross-element filtering designated for structured mesh
-  subroutine field_global_filtering_z(u, coef)
-    type(field_t), intent(inout) :: u
-    type(coef_t), intent(inout) :: coef
+  subroutine field_global_filtering_xz(u, nu, nelv, offset_el)
+    integer :: nu, nelv, offset_el
+    real(kind=rp), intent(inout) :: u(nu, nu, nu, nelv)
     integer :: i, j, k, m, jk(2)
-    integer :: i_start, i_step, i_step_pre, ierr
-    real(kind=rp), allocatable :: f_2d(:,:)
-    real(kind=rp) :: ref(28)    
-    
+    integer :: i_start, i_step, ierr
+    real(kind=rp), allocatable :: f_2d(:,:)   
+
     !!! Step0: Formulate a global array of the field
     call rzero(f,size(f))
-    call assemble_global_field(f, nx, ny, nz, u, nelvx, nelvy, nelvz, lx, ly, lz)
-    
+    call assemble_global_field(f, nx, ny, nz, u, nelvx, nelvy, nelvz, &
+                               lx_filter, &
+                               lx_filter, &
+                               lx_filter, nelv, offset_el)
+
     !!! Step3: Perform operator parallelly
-    !! Step 3.1: form a 2d field array for tensor product
-    if (mod(nx*ny,pe_size) .ne. 0) then
-       if (pe_rank .ne. pe_size - 1) then
-          i_step = int(nx*ny/pe_size)
-          i_step_pre = i_step
-       else
-          i_step = mod(nx*ny,pe_size) + int(nx*ny/pe_size)
-          i_step_pre = int(nx*ny/pe_size)
-       end if
-    else
-       i_step = int(nx*ny/pe_size)
-       i_step_pre = i_step
-    end if
-    i_start = pe_rank*i_step_pre + 1
+    !! Step 3.1: allocate cores and form a 2d field array for tensor product
+    call allocate_core(nx*ny, i_step, i_start)
     do i = i_start, i_start + i_step - 1
+       ! reshape should be used because only part of f and f_2d_z are needed here
+       ! index mapping
        jk = index_element_1d_to_2d(i, nx)     
        j = jk(1)
        k = jk(2)
-       f_2d_z(i,:) = f(j,k,:)
+       ! data acquiring
+       f_2d_z(:,i) = f(j,k,:)
     end do
-    call rzero(f,size(f)) ! clear work array f
+    call rzero(f,size(f)) ! clear work array f to be ready for following filtering
     
     !! Step 3.2: filtering
-    f_2d_z(i_start: i_start + i_step - 1, :) = &
-       transpose(matmul(filter_z, &
-       transpose(f_2d_z(i_start: i_start + i_step - 1, :))))
-    
-    !! Step 3.2: reshape the array
+    f_2d_z(:, i_start: i_start + i_step - 1) = matmul(filter_z, f_2d_z(:, i_start: i_start + i_step - 1))
+
+    !! Step 3.3: reshape the array
     do i = i_start, i_start + i_step - 1
+       ! reshape should be used because only part of f and f_2d_z are needed here
+       ! index mapping
        jk = index_element_1d_to_2d(i, nx)
        j = jk(1)
        k = jk(2)
-       f(j,k,:) = f_2d_z(i,:)
+       ! data acquiring
+       f(j,k,:) = f_2d_z(:,i)
     end do
 
-    !! Step 3.3: collect information from all ranks
+    !! Step 3.4: collect information from all ranks
     call MPI_Allreduce(MPI_IN_PLACE, f, size(f), &
            MPI_REAL_PRECISION, MPI_SUM, NEKO_COMM, ierr)
 
+    !!! Step4: Perform operator parallelly
+    !! Step 4.1: allocate cores and form a 2d field array for tensor product
+    call allocate_core(ny*nz, i_step, i_start)
+    do i = i_start, i_start + i_step - 1
+       ! reshape should be used because only part of f and f_2d_x are needed here
+       ! index mapping
+       jk = index_element_1d_to_2d(i, ny)     
+       j = jk(1)
+       k = jk(2)
+       f_2d_x(:,i) = f(:,j,k)
+    end do
+    call rzero(f,size(f)) ! clear work array f to be ready for following filtering
+
+    !! Step 4.2: filtering
+    f_2d_x(:, i_start: i_start + i_step - 1) = matmul(filter_x, &
+        f_2d_x(:, i_start: i_start + i_step - 1))
+
+    !! Step 4.3: reshape the array
+    do i = i_start, i_start + i_step - 1
+       ! reshape should be used because only part of f and f_2d_x are needed here
+       ! index mapping
+       jk = index_element_1d_to_2d(i, ny)
+       j = jk(1)
+       k = jk(2)
+       ! data acquiring
+       f(:,j,k) = f_2d_x(:,i)
+    end do
+    !! Step 4.4: collect information from all ranks
+    call MPI_Allreduce(MPI_IN_PLACE, f, size(f), &
+           MPI_REAL_PRECISION, MPI_SUM, NEKO_COMM, ierr)
     
-    !!! Step4: disassemble the global array into u%x
+    !!! Step 5: disassemble the global array into u%x
     fb(1:nx,1:ny,1:nz) = f
     !!! resume the periodicity boundary condition
     fb(:,:,nz+1) = fb(:,:,1)
     fb(nx+1,:,:) = fb(1,:,:)
-    call disassemble_global_field(fb, nx+1, ny, nz+1, u, nelvx, nelvy, nelvz, lx, ly, lz)
-    
-  end subroutine field_global_filtering_z
+    call disassemble_global_field(fb, nx+1, ny, nz+1, u, nelvx, nelvy, nelvz, &
+                                  lx_filter, lx_filter, lx_filter, nelv, offset_el)
+
+  end subroutine field_global_filtering_xz
+
+  subroutine allocate_core(n,step,start)
+    integer, intent(inout) :: step, start
+    integer, intent(in):: n
+    integer :: residual_core
+
+    residual_core = mod(n,pe_size)
+    if (residual_core .ne. 0) then
+      step = int(n/pe_size)
+      if (pe_rank .le. (residual_core - 1)) then
+         step = step + 1
+         start = pe_rank*step + 1
+      else
+         start = residual_core * (step + 1) + &
+                   (pe_rank - residual_core) * step + 1
+      end if
+    else
+       step = int(n/pe_size)
+       start = pe_rank*step + 1
+    end if
+
+  end subroutine allocate_core
 
   function index_element_1d_to_3d(i_1d, n1, n2) result(ijk)
     integer, intent(in) :: i_1d, n1, n2
@@ -365,19 +413,19 @@ contains
     ij(2) = j
   end function index_element_1d_to_2d
 
-  subroutine assemble_global_field(field_glb, nx, ny, nz, u, nelvx, nelvy, nelvz, lx, ly, lz)
-    integer, intent(in) :: nx, ny, nz
-    real(kind=rp), intent(inout) :: field_glb(nx,ny,nz)
-    type(field_t), intent(in) :: u
+  subroutine assemble_global_field(field_glb, nx, ny, nz, u, nelvx, nelvy, nelvz, lx, ly, lz, nelv, offset_el)
+    integer, intent(in) :: nx, ny, nz, nelv, offset_el
     integer, intent(in) :: nelvx, nelvy, nelvz, lx, ly, lz
+    real(kind=rp), intent(inout) :: field_glb(nx,ny,nz)
+    real(kind=rp), intent(in) :: u(lx, ly, lz, nelv)
 
     integer :: index_global_element_xyz(3), glb_index_element
     integer :: index_global_element_x, index_global_element_y, index_global_element_z
     integer :: index_global_pts_x, index_global_pts_y, index_global_pts_z
     integer :: i, ierr
 
-    do i = 1, u%msh%nelv
-       glb_index_element = i + u%msh%offset_el
+    do i = 1, nelv
+       glb_index_element = i + offset_el
        ! break down the 1d global index into 3d for box mesh
        index_global_element_xyz = index_element_1d_to_3d(glb_index_element, nelvx, nelvy)
        index_global_element_x = index_global_element_xyz(1)
@@ -390,27 +438,28 @@ contains
 
        field_glb(index_global_pts_x:index_global_pts_x + (lx-2), &
          index_global_pts_y:index_global_pts_y + (ly-1), &
-         index_global_pts_z:index_global_pts_z + (lz-2)) = u%x(1:lx-1, :, 1:lz-1, i)
+         index_global_pts_z:index_global_pts_z + (lz-2)) = u(1:lx-1, :, 1:lz-1, i)
     end do
+
     ! Assemble the global field
     call MPI_Allreduce(MPI_IN_PLACE, f, size(f), &
            MPI_REAL_PRECISION, MPI_SUM, NEKO_COMM, ierr)
 
   end subroutine assemble_global_field
 
-  subroutine disassemble_global_field(fb, nxb, nyb, nzb, u, nelvx, nelvy, nelvz, lx, ly, lz)
-    integer, intent(in) :: nxb, nyb, nzb
-    real(kind=rp), intent(inout) :: fb(nxb,nyb,nzb)
-    type(field_t), intent(inout) :: u
+  subroutine disassemble_global_field(fb, nxb, nyb, nzb, u, nelvx, nelvy, nelvz, lx, ly, lz, nelv, offset_el)
+    integer, intent(in) :: nxb, nyb, nzb, nelv, offset_el
     integer, intent(in) :: nelvx, nelvy, nelvz, lx, ly, lz
+    real(kind=rp), intent(inout) :: fb(nxb,nyb,nzb)
+    real(kind=rp), intent(inout) :: u(lx, ly, lz, nelv)
 
     integer :: index_global_element_xyz(3), glb_index_element
     integer :: index_global_element_x, index_global_element_y, index_global_element_z
     integer :: index_global_pts_x, index_global_pts_y, index_global_pts_z
     integer :: i, ierr
 
-    do i = 1, u%msh%nelv
-       glb_index_element = i + u%msh%offset_el
+    do i = 1, nelv
+       glb_index_element = i + offset_el
        ! break down the 1d global index into 3d for box mesh
        index_global_element_xyz = index_element_1d_to_3d(glb_index_element, nelvx, nelvy)
        index_global_element_x = index_global_element_xyz(1)
@@ -421,7 +470,7 @@ contains
        index_global_pts_y = (index_global_element_y-1) * ly + 1
        index_global_pts_z = (index_global_element_z-1) * (lz-1) + 1
 
-       u%x(1:lx, 1:ly, 1:lz, i) = &
+       u(1:lx, 1:ly, 1:lz, i) = &
           fb(index_global_pts_x:index_global_pts_x + (lx-1), &
                     index_global_pts_y:index_global_pts_y + (ly-1), &
                     index_global_pts_z:index_global_pts_z + (lz-1))
@@ -434,11 +483,14 @@ contains
     real(kind=rp) :: t
     type(json_file), intent(inout) :: params
 
+    deallocate(u_eq)
+    deallocate(v_eq)
+    deallocate(w_eq)
     deallocate(f)
     deallocate(fb)
-    deallocate(ident)
     call wt%free()
     call wtt%free()
+    call wttwt_inv%free()
     call wt_inv%free()
     call wt_invt%free()
     deallocate(phi_z)
