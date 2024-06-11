@@ -22,7 +22,7 @@ module user
   ! operator to link field on Fourier collocation space and state space.
   complex, allocatable :: phi_x(:,:), phi_x_inv(:,:), phi_z(:,:), phi_z_inv(:,:)
   real(kind=rp), allocatable :: filter_amp_x(:,:), filter_amp_z(:,:)
-  real(kind=rp), allocatable :: filter_x(:,:), filter_z(:,:), filter_zt(:,:)
+  real(kind=rp), allocatable :: filter_x(:,:), filter_z(:,:)
   
 contains
 
@@ -159,7 +159,6 @@ contains
 
     call Fourier_init(phi_x, phi_x_inv, filter_amp_x, filter_x, kx_cutoff, nx)
     call Fourier_init(phi_z, phi_z_inv, filter_amp_z, filter_z, kz_cutoff, nz)
-    filter_zt = transpose(filter_z)
     call user_field_filtering(t, 0, u, v, w, p, coef, params)
   end subroutine user_initialize
 
